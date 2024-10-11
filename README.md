@@ -1,4 +1,4 @@
-# AnthropicMockerClient
+# anthropic_mock_wrapper
 
 A lightweight wrapper around the Anthropic Python client for testing purposes.
 
@@ -6,20 +6,20 @@ Save money on your Anthropic API usage by mocking responses when your API key is
 
 ## Installation
 
-You can install the AnthropicMockerClient package using pip:
+You can install the anthropic_mock_wrapper package using pip:
 
 ```bash
-pip install AnthropicMockerClient
+pip install anthropic_mock_wrapper
 ```
 
 ```python
-from anthropic_Mocker_client import AnthropicMockerClient
+from anthropic_mock_wrapper import AnthropicMockWrapper
 ```
 
 ## Initialize the client
 
 ```python
-client = AnthropicMockerClient(api_key="your_api_key_here")
+client = AnthropicMockWrapper(api_key="your_api_key_here")
 ```
 
 ## Use the client to interact with Anthropic's API
@@ -34,9 +34,9 @@ print(response)
 ```
 
 ```python
-from anthropic_Mocker_client import AnthropicMockerClient
+from anthropic_mock_wrapper import AnthropicMockWrapper
 # Initialize the testable client
-testable_client = AnthropicMockerClient(api_key="test_key")
+testable_client = AnthropicMockWrapper(api_key="test_key")
 #Set a mock response
 testable_client.set_mock_response({
 "completion": "This is a mock response",

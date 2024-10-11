@@ -2,7 +2,7 @@ import lorem
 from anthropic import Anthropic, AsyncAnthropic
 from typing import Any, Dict, AsyncGenerator, Union
 
-class AnthropicMockerClient:
+class AnthropicMockWrapper:
     def __init__(self, client: Union[Anthropic, AsyncAnthropic]):
         self.client = client
         self.is_test = isinstance(client, Anthropic) and client.api_key.startswith("TEST_")
