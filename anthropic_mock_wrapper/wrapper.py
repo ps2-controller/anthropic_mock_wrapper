@@ -1,134 +1,234 @@
-import lorem
-from anthropic import Anthropic, AsyncAnthropic
-from typing import Any, Dict, List, AsyncGenerator, Union, Optional
 import asyncio
+import random
+import string
+import lorem
+from typing import Any, Dict, List, Union, Optional, AsyncIterator, Callable
+from anthropic import Anthropic, AsyncAnthropic
+from anthropic.types import (
+    Message, MessageStreamEvent
+)
+from anthropic.types.beta import ( BetaMessageBatch,
+    BetaMessageBatchIndividualResponse,
+    BetaMessageBatchRequestCounts, BetaMessageBatchSucceededResult
+)
+
+class MockMessageStream:
+    def __init__(self, content: str):
+        self.content = content
+        self.position = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.position >= len(self.content):
+            raise StopAsyncIteration
+
+        chunk = self.content[self.position:self.position + 10]
+        self.position += 10
+
+        return MessageStreamEvent(
+            type="content_block_delta",
+            index=0,
+            delta={"type": "text", "text": chunk}
+        )
 
 class AnthropicMockWrapper:
     def __init__(self, client: Union[Anthropic, AsyncAnthropic]):
         self.client = client
-        self.is_test = isinstance(client, Anthropic) and client.api_key.startswith("TEST_")
+        self.is_test = client.api_key.startswith("TEST_")
+        self.is_async = isinstance(client, AsyncAnthropic)
+        
+        # Dynamically create wrapper methods for all client attributes
+        for attr_name in dir(client):
+            if not attr_name.startswith('_'):
+                setattr(self, attr_name, self._create_wrapper(getattr(client, attr_name)))
+
+        # Create nested structures
         self.messages = self.Messages(self)
-        self.message_batches = self.MessageBatches(self)
+        self.completions = self.Completions(self)
+        self.beta = self.Beta(self)
 
-    async def completion(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        if self.is_test:
-            return self._get_mock_response(kwargs.get("max_tokens_to_sample", 100), "completion")
-        
-        if isinstance(self.client, AsyncAnthropic):
-            return await self.client.completions.create(*args, **kwargs)
+    def _create_wrapper(self, attr: Any):
+        if callable(attr):
+            return self._create_method_wrapper(attr)
+        elif isinstance(attr, property):
+            return property(self._create_property_wrapper(attr))
         else:
-            return self.client.completions.create(*args, **kwargs)
+            return attr
 
-    async def completion_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Dict[str, Any], None]:
-        if self.is_test:
-            yield self._get_mock_response(kwargs.get("max_tokens_to_sample", 100), "completion")
-        else:
-            if isinstance(self.client, AsyncAnthropic):
-                async for chunk in self.client.completions.create(*args, **kwargs):
-                    yield chunk
-            else:
-                for chunk in self.client.completions.create(*args, **kwargs):
-                    yield chunk
+    def _create_method_wrapper(self, method):
+        async def async_wrapper(*args, **kwargs):
+            if self.is_test:
+                return await self._mock_method(method.__name__, *args, **kwargs)
+            return await method(*args, **kwargs)
 
-    async def messages_create(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        if self.is_test:
-            return self._get_mock_response(kwargs.get("max_tokens", 100), "message")
-        
-        if isinstance(self.client, AsyncAnthropic):
-            return await self.client.messages.create(*args, **kwargs)
+        def sync_wrapper(*args, **kwargs):
+            if self.is_test:
+                return self._mock_method(method.__name__, *args, **kwargs)
+            return method(*args, **kwargs)
+
+        return async_wrapper if self.is_async else sync_wrapper
+
+    def _create_property_wrapper(self, prop):
+        def wrapper(self):
+            if self.is_test:
+                return self._mock_property(prop.__name__)
+            return prop.__get__(self.client)
+        return wrapper
+
+    async def _mock_method(self, method_name: str, *args, **kwargs):
+        if method_name == "create":
+            return self._mock_create(*args, **kwargs)
+        elif method_name == "stream":
+            return self._mock_stream(*args, **kwargs)
+        elif method_name == "retrieve":
+            return self._mock_retrieve(*args, **kwargs)
+        elif method_name == "list":
+            return self._mock_list(*args, **kwargs)
+        elif method_name == "cancel":
+            return self._mock_cancel(*args, **kwargs)
+        elif method_name == "results":
+            return self._mock_results(*args, **kwargs)
         else:
-            return self.client.messages.create(*args, **kwargs)
+            return self._mock_default_method(*args, **kwargs)
+
+    def _mock_property(self, property_name: str):
+        if property_name == "api_key":
+            return "TEST_API_KEY"
+        elif property_name == "base_url":
+            return "https://api.anthropic.com"
+        elif property_name == "timeout":
+            return 600
+        elif property_name == "max_retries":
+            return 2
+        else:
+            return None
+
+    def _mock_create(self, *args, **kwargs):
+        content = lorem.paragraph()
+        return Message(
+            id=self._generate_id("msg"),
+            type="message",
+            role="assistant",
+            content=[{"type": "text", "text": content}],
+            model=kwargs.get("model", "claude-3-opus-20240229"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 10, "output_tokens": len(content.split())}
+        )
+
+    def _mock_stream(self, *args, **kwargs):
+        content = lorem.paragraph()
+        return MockMessageStream(content)
+
+    def _mock_retrieve(self, *args, **kwargs):
+        return BetaMessageBatch(
+            id=self._generate_id("batch"),
+            processing_status="completed",
+            created_at="2023-01-01T00:00:00Z",
+            completed_at="2023-01-01T00:01:00Z",
+            request_counts=BetaMessageBatchRequestCounts(
+                succeeded=1,
+                errored=0,
+                canceled=0,
+                completed=1,
+                total=1
+            )
+        )
+
+    def _mock_list(self, *args, **kwargs):
+        batches = [
+            BetaMessageBatch(
+                id=self._generate_id("batch"),
+                processing_status="completed",
+                created_at="2023-01-01T00:00:00Z",
+                completed_at="2023-01-01T00:01:00Z",
+                request_counts=BetaMessageBatchRequestCounts(
+                    succeeded=1,
+                    errored=0,
+                    canceled=0,
+                    completed=1,
+                    total=1
+                )
+            )
+            for _ in range(5)
+        ]
+        return {"data": batches, "has_more": False}
+
+    def _mock_cancel(self, *args, **kwargs):
+        return BetaMessageBatch(
+            id=self._generate_id("batch"),
+            processing_status="canceled",
+            created_at="2023-01-01T00:00:00Z",
+            completed_at="2023-01-01T00:01:00Z",
+            request_counts=BetaMessageBatchRequestCounts(
+                succeeded=0,
+                errored=0,
+                canceled=1,
+                completed=1,
+                total=1
+            )
+        )
+
+    def _mock_results(self, *args, **kwargs):
+        for _ in range(5):
+            yield BetaMessageBatchIndividualResponse(
+                custom_id=self._generate_id("custom"),
+                result=BetaMessageBatchSucceededResult(
+                    type="succeeded",
+                    message=self._mock_create()
+                )
+            )
+
+    def _mock_default_method(self, *args, **kwargs):
+        return None
+
+    def _generate_id(self, prefix: str) -> str:
+        random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=24))
+        return f"{prefix}_{random_string}"
 
     class Messages:
         def __init__(self, wrapper):
             self.wrapper = wrapper
+            self.create = wrapper._create_method_wrapper(wrapper.client.messages.create)
+            self.stream = wrapper._create_method_wrapper(wrapper.client.messages.stream)
 
-        async def create(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-            return await self.wrapper.messages_create(*args, **kwargs)
-
-    class MessageBatches:
+    class Completions:
         def __init__(self, wrapper):
             self.wrapper = wrapper
+            self.create = wrapper._create_method_wrapper(wrapper.client.completions.create)
 
-        async def create(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-            if self.wrapper.is_test:
-                return self.wrapper._get_mock_response(kwargs.get("max_tokens", 100), "message_batch")
-            
-            if isinstance(self.wrapper.client, AsyncAnthropic):
-                return await self.wrapper.client.message_batches.create(*args, **kwargs)
-            else:
-                return self.wrapper.client.message_batches.create(*args, **kwargs)
+    class Beta:
+        def __init__(self, wrapper):
+            self.wrapper = wrapper
+            self.messages = self.Messages(wrapper)
 
-        async def retrieve(self, message_batch_id: str) -> Dict[str, Any]:
-            if self.wrapper.is_test:
-                return self.wrapper._get_mock_response(100, "message_batch")
-            
-            if isinstance(self.wrapper.client, AsyncAnthropic):
-                return await self.wrapper.client.message_batches.retrieve(message_batch_id)
-            else:
-                return self.wrapper.client.message_batches.retrieve(message_batch_id)
+        class Messages:
+            def __init__(self, wrapper):
+                self.wrapper = wrapper
+                self.create = wrapper._create_method_wrapper(wrapper.client.beta.messages.create)
+                self.batches = self.Batches(wrapper)
 
-        async def retrieve_results(self, message_batch_id: str) -> str:
-            if self.wrapper.is_test:
-                return self.wrapper._generate_lorem_ipsum(100)
-            
-            if isinstance(self.wrapper.client, AsyncAnthropic):
-                return await self.wrapper.client.message_batches.retrieve_results(message_batch_id)
-            else:
-                return self.wrapper.client.message_batches.retrieve_results(message_batch_id)
+            class Batches:
+                def __init__(self, wrapper):
+                    self.wrapper = wrapper
+                    self.create = wrapper._create_method_wrapper(wrapper.client.beta.messages.batches.create)
+                    self.retrieve = wrapper._create_method_wrapper(wrapper.client.beta.messages.batches.retrieve)
+                    self.list = wrapper._create_method_wrapper(wrapper.client.beta.messages.batches.list)
+                    self.cancel = wrapper._create_method_wrapper(wrapper.client.beta.messages.batches.cancel)
+                    self.results = wrapper._create_method_wrapper(wrapper.client.beta.messages.batches.results)
 
-        async def list(self, limit: int = 20, before_id: Optional[str] = None, after_id: Optional[str] = None) -> Dict[str, Any]:
-            if self.wrapper.is_test:
-                return {"data": [self.wrapper._get_mock_response(100, "message_batch") for _ in range(limit)]}
-            
-            if isinstance(self.wrapper.client, AsyncAnthropic):
-                return await self.wrapper.client.message_batches.list(limit=limit, before_id=before_id, after_id=after_id)
-            else:
-                return self.wrapper.client.message_batches.list(limit=limit, before_id=before_id, after_id=after_id)
+    def with_options(self, **kwargs):
+        if self.is_test:
+            return self
+        return self.client.with_options(**kwargs)
 
-        async def cancel(self, message_batch_id: str) -> Dict[str, Any]:
-            if self.wrapper.is_test:
-                return self.wrapper._get_mock_response(100, "message_batch", processing_status="canceling")
-            
-            if isinstance(self.wrapper.client, AsyncAnthropic):
-                return await self.wrapper.client.message_batches.cancel(message_batch_id)
-            else:
-                return self.wrapper.client.message_batches.cancel(message_batch_id)
+    def with_raw_response(self):
+        if self.is_test:
+            return self
+        return self.client.with_raw_response()
 
-    def _get_mock_response(self, max_tokens: int, response_type: str, processing_status: str = "in_progress") -> Dict[str, Any]:
-        if response_type == "completion":
-            return {
-                "completion": self._generate_lorem_ipsum(max_tokens),
-                "stop_reason": "length",
-                "model": "claude-2"
-            }
-        elif response_type == "message":
-            return {
-                "id": "msg_" + self._generate_lorem_ipsum(8),
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "text", "text": self._generate_lorem_ipsum(max_tokens)}],
-                "model": "claude-3-opus-20240229",
-                "stop_reason": "end_turn",
-                "usage": {"input_tokens": 10, "output_tokens": max_tokens}
-            }
-        elif response_type == "message_batch":
-            return {
-                "id": "msgbatch_" + self._generate_lorem_ipsum(8),
-                "type": "message_batch",
-                "processing_status": processing_status,
-                "request_counts": {
-                    "processing": 100,
-                    "succeeded": 50,
-                    "errored": 30,
-                    "canceled": 10,
-                    "expired": 10
-                },
-                "created_at": "2024-08-20T18:37:24.100435Z",
-                "expires_at": "2024-08-21T18:37:24.100435Z",
-                "results_url": f"https://api.anthropic.com/v1/messages/batches/msgbatch_{self._generate_lorem_ipsum(8)}/results"
-            }
-
-    def _generate_lorem_ipsum(self, max_tokens: int) -> str:
-        words = lorem.text().split()
-        return " ".join(words[:max_tokens])
+    def with_streaming_response(self):
+        if self.is_test:
+            return self
+        return self.client.with_streaming_response()
