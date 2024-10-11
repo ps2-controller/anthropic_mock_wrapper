@@ -19,7 +19,7 @@ from anthropic_mock_wrapper import AnthropicMockWrapper
 ## Initialize the client
 
 ```python
-client = AnthropicMockWrapper(api_key="your_api_key_here")
+client = AnthropicMockWrapper(api_key="TEST_your_api_key_here")
 ```
 
 ## Use the client to interact with Anthropic's API
