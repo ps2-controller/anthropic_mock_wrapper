@@ -52,6 +52,12 @@ max_tokens_to_sample=100
 assert response["completion"] == "This is a mock response"
 ```
 
+## Build
+
+```bash
+python -m build
+```
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
